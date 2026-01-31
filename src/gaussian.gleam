@@ -2,7 +2,6 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/dynamic
 import lustre
 import lustre/attribute
 import lustre/effect
@@ -202,11 +201,11 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
 
     InitializeMatrix -> {
       case model.input_mode {
-        EditingMatrix(rows, cols, values, _touched) -> {
+        EditingMatrix(_rows, cols, values, _touched) -> {
           // Parse values to floats - handles both "1" and "1.0"
           let float_values =
             values
-            |> list.index_map(fn(v, idx) {
+            |> list.index_map(fn(v, _idx) {
               case parse_number(v) {
                 Ok(f) -> f
                 Error(_) -> 0.0
@@ -434,7 +433,7 @@ fn get_guide_text(model: Model) -> String {
     None -> {
       case model.selected_row, model.hovered_cell {
         None, _ -> "💡 Click on a row to select it"
-        Some(selected), None -> 
+        Some(_selected), None -> 
           "💡 Click another row to swap, or click a cell to eliminate its column"
         Some(selected), Some(#(hover_row, hover_col)) -> {
           case selected == hover_row {
@@ -449,9 +448,9 @@ fn get_guide_text(model: Model) -> String {
                   let target_cell = matrix.get_cell(model.current_matrix, hover_row, hover_col)
                   
                   case source_cell, target_cell {
-                    Ok(s), Ok(t) if s == 0.0 -> 
+                    Ok(s), Ok(_t) if s == 0.0 -> 
                       "⚠️ Cannot eliminate: source cell (R" <> int.to_string(selected) <> ") is zero"
-                    Ok(s), Ok(t) if t == 0.0 -> 
+                    Ok(_s), Ok(t) if t == 0.0 -> 
                       "⚠️ Cannot eliminate: target cell is already zero"
                     Ok(_), Ok(_) -> 
                       "✓ Click to eliminate R" <> int.to_string(hover_row) <> "[" <> int.to_string(hover_col) <> "]"
@@ -799,9 +798,6 @@ fn get_subscript(n: Int) -> String {
 }
 
 fn view_operating_mode(model: Model) -> Element(Msg) {
-  let row_count = matrix.rows(model.current_matrix)
-  let col_count = matrix.columns(model.current_matrix)
-  
   html.div([attribute.class("grid grid-cols-1 lg:grid-cols-3 gap-6")], [
     html.div([attribute.class("lg:col-span-2")], [
       // Header with restart button
