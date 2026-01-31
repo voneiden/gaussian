@@ -36,7 +36,9 @@ jobs:
 
       - name: Fix asset paths for GitHub Pages
         run: |
+          # Fix asset paths to relative
           sed -i 's|href="/gaussian.css"|href="./gaussian.css"|g' dist/index.html
+          sed -i 's|href="/favicon.svg"|href="./favicon.svg"|g' dist/index.html
           sed -i 's|src="/gaussian.js"|src="./gaussian.js"|g' dist/index.html
 
       - name: Upload artifact

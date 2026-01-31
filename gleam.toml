@@ -22,4 +22,5 @@ gleeunit = ">= 1.0.0 and < 2.0.0"
 
 [tools.lustre.html]
 stylesheets = [{ href = "/gaussian.css" }]
+links = [{ rel = "icon", type = "image/svg+xml", href = "/favicon.svg" }]
 
