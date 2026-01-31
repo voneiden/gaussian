@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-scheme: dark;
+  }
+}
+
+/* Prevent flash of light theme on dark mode preference */
+@media (prefers-color-scheme: dark) {
+  html {
+    background-color: rgb(17, 24, 39); /* gray-900 */
+    color-scheme: dark;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  html {
+    background-color: rgb(249, 250, 251); /* gray-50 */
+    color-scheme: light;
+  }
+}
+
+html.dark {
+  background-color: rgb(17, 24, 39); /* gray-900 */
+  color-scheme: dark;
+}
+
+html.light {
+  background-color: rgb(249, 250, 251); /* gray-50 */
+  color-scheme: light;
+}
+
+@variant dark (html.dark &);
+@variant light (html:not(.dark) &);
