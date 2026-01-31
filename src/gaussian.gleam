@@ -61,6 +61,7 @@ pub type Model {
     theme: Theme,
     settings: Settings,
     show_settings_modal: Bool,
+    solution: Option(List(Float)),
   )
 }
 
@@ -97,6 +98,7 @@ fn init(_flags) -> #(Model, effect.Effect(Msg)) {
       theme: initial_theme,
       settings: Settings(decimal_precision: saved_precision),
       show_settings_modal: False,
+      solution: None,
     ),
     effect.none(),
   )
@@ -123,6 +125,7 @@ pub type Msg {
   HoverCell(row: Int, col: Int)
   UnhoverCell
   CellBlur(index: Int)
+  Solve
   NoOp
 }
 
@@ -188,6 +191,14 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
         _ -> #(model, effect.none())
       }
     }
+    
+    Solve -> {
+      let solution_result = matrix.solve_upper_triangular(model.current_matrix)
+      case solution_result {
+        Ok(solution) -> #(Model(..model, solution: Some(solution)), effect.none())
+        Error(_) -> #(model, effect.none())
+      }
+    }
 
     InitializeMatrix -> {
       case model.input_mode {
@@ -245,6 +256,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
                     HistoryEntry(model.current_matrix, description),
                     ..model.history
                   ],
+                  solution: None,
                 ),
                 effect.none(),
               )
@@ -284,6 +296,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
                     HistoryEntry(model.current_matrix, description),
                     ..model.history
                   ],
+                  solution: None,
                 ),
                 effect.none(),
               )
@@ -304,6 +317,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
               current_matrix: prev_matrix,
               history: rest,
               selected_row: None,
+              solution: None,
             ),
             effect.none(),
           )
@@ -325,6 +339,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
           theme: model.theme,
           settings: model.settings,
           show_settings_modal: False,
+          solution: None,
         ),
         effect.none(),
       )
@@ -411,30 +426,38 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
 
 // Helper to get guide text based on current state
 fn get_guide_text(model: Model) -> String {
-  case model.selected_row, model.hovered_cell {
-    None, _ -> "💡 Click on a row to select it"
-    Some(selected), None -> 
-      "💡 Click another row to swap, or click a cell to eliminate its column"
-    Some(selected), Some(#(hover_row, hover_col)) -> {
-      case selected == hover_row {
-        True -> "⚠️ Cannot perform operation on the same row"
-        False -> {
-          // Check if hovering over row label (col = -1) - this means swap
-          case hover_col {
-            -1 -> "✓ Click to swap R" <> int.to_string(selected) <> " ↔ R" <> int.to_string(hover_row)
-            _ -> {
-              // Check if elimination is possible
-              let source_cell = matrix.get_cell(model.current_matrix, selected, hover_col)
-              let target_cell = matrix.get_cell(model.current_matrix, hover_row, hover_col)
-              
-              case source_cell, target_cell {
-                Ok(s), Ok(t) if s == 0.0 -> 
-                  "⚠️ Cannot eliminate: source cell (R" <> int.to_string(selected) <> ") is zero"
-                Ok(s), Ok(t) if t == 0.0 -> 
-                  "⚠️ Cannot eliminate: target cell is already zero"
-                Ok(_), Ok(_) -> 
-                  "✓ Click to eliminate R" <> int.to_string(hover_row) <> "[" <> int.to_string(hover_col) <> "]"
-                _, _ -> "⚠️ Invalid operation"
+  // First check if we have a solution or can solve
+  let upper_tri = matrix.is_upper_triangular(model.current_matrix)
+  case model.solution {
+    Some(_) -> "✓ Solution calculated! See below."
+    None if upper_tri -> "✓ Matrix is in upper triangular form. Click 'Solve' to calculate the solution."
+    None -> {
+      case model.selected_row, model.hovered_cell {
+        None, _ -> "💡 Click on a row to select it"
+        Some(selected), None -> 
+          "💡 Click another row to swap, or click a cell to eliminate its column"
+        Some(selected), Some(#(hover_row, hover_col)) -> {
+          case selected == hover_row {
+            True -> "⚠️ Cannot perform operation on the same row"
+            False -> {
+              // Check if hovering over row label (col = -1) - this means swap
+              case hover_col {
+                -1 -> "✓ Click to swap R" <> int.to_string(selected) <> " ↔ R" <> int.to_string(hover_row)
+                _ -> {
+                  // Check if elimination is possible
+                  let source_cell = matrix.get_cell(model.current_matrix, selected, hover_col)
+                  let target_cell = matrix.get_cell(model.current_matrix, hover_row, hover_col)
+                  
+                  case source_cell, target_cell {
+                    Ok(s), Ok(t) if s == 0.0 -> 
+                      "⚠️ Cannot eliminate: source cell (R" <> int.to_string(selected) <> ") is zero"
+                    Ok(s), Ok(t) if t == 0.0 -> 
+                      "⚠️ Cannot eliminate: target cell is already zero"
+                    Ok(_), Ok(_) -> 
+                      "✓ Click to eliminate R" <> int.to_string(hover_row) <> "[" <> int.to_string(hover_col) <> "]"
+                    _, _ -> "⚠️ Invalid operation"
+                  }
+                }
               }
             }
           }
@@ -783,7 +806,7 @@ fn view_operating_mode(model: Model) -> Element(Msg) {
     html.div([attribute.class("lg:col-span-2")], [
       // Header with restart button
       html.div([attribute.class("flex justify-between items-center mb-4")], [
-        html.h2([attribute.class("text-2xl font-semibold text-gray-700")], [
+        html.h2([attribute.class("text-2xl font-semibold text-gray-700 dark:text-gray-200")], [
           element.text("Matrix Operations")
         ]),
         html.button(
@@ -801,6 +824,7 @@ fn view_operating_mode(model: Model) -> Element(Msg) {
         ])
       ]),
       view_matrix_display(model),
+      view_solution_panel(model),
     ]),
     html.div([], [
       view_history(model.history, model.settings.decimal_precision),
@@ -939,6 +963,59 @@ fn view_matrix_display(model: Model) -> Element(Msg) {
       ]),
     ]),
   ])
+}
+
+fn view_solution_panel(model: Model) -> Element(Msg) {
+  let is_upper_tri = matrix.is_upper_triangular(model.current_matrix)
+  
+  case model.solution {
+    Some(solution) -> {
+      // Display the solution
+      html.div([attribute.class("bg-green-50 dark:bg-green-900 p-6 rounded-lg shadow-md mt-6 border-l-4 border-green-500")], [
+        html.h3([attribute.class("text-xl font-semibold text-green-800 dark:text-green-100 mb-4")], [
+          element.text("✓ Solution")
+        ]),
+        html.div([attribute.class("space-y-2")], 
+          list.index_map(solution, fn(value, idx) {
+            html.div([attribute.class("text-lg text-gray-800 dark:text-gray-100 font-mono")], [
+              element.text("x" <> to_subscript(idx + 1) <> " = " <> format_float(value, model.settings.decimal_precision))
+            ])
+          })
+        ),
+      ])
+    }
+    None if is_upper_tri -> {
+      // Show solve button
+      html.div([attribute.class("mt-6")], [
+        html.button([
+          attribute.class("w-full bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-semibold text-lg shadow-md"),
+          event.on_click(Solve),
+        ], [
+          element.text("🔍 Solve System")
+        ])
+      ])
+    }
+    None -> {
+      // Matrix not in upper triangular form yet
+      element.none()
+    }
+  }
+}
+
+fn to_subscript(n: Int) -> String {
+  case n {
+    1 -> "₁"
+    2 -> "₂"
+    3 -> "₃"
+    4 -> "₄"
+    5 -> "₅"
+    6 -> "₆"
+    7 -> "₇"
+    8 -> "₈"
+    9 -> "₉"
+    0 -> "₀"
+    _ -> int.to_string(n)
+  }
 }
 
 fn handle_row_click(model: Model, row: Int) -> Msg {

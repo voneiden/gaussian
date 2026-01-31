@@ -16,6 +16,13 @@ pub type OperationError {
   SameRowError
 }
 
+pub type SolveError {
+  NotUpperTriangular
+  ZeroDiagonal
+  InconsistentSystem
+  WrongDimensions
+}
+
 pub fn new(rows: Int, cols: Int) -> Matrix {
   list.repeat(list.repeat(0.0, cols), rows)
 }
@@ -172,6 +179,120 @@ pub fn eliminate_row(
           }
         }
         False -> Error(RowOutOfBounds)
+      }
+    }
+  }
+}
+
+// Check if matrix is in upper triangular form (row echelon form)
+// For an augmented matrix (n×(n+1)), checks if:
+// - Each row i has zeros in columns 0..i-1
+// - Diagonal element at column i is non-zero
+pub fn is_upper_triangular(matrix: Matrix) -> Bool {
+  let row_count = rows(matrix)
+  let col_count = columns(matrix)
+  
+  // Must be n×(n+1) augmented matrix
+  case col_count == row_count + 1 {
+    False -> False
+    True -> {
+      list.range(0, row_count - 1)
+      |> list.all(fn(i) {
+        // Check that columns 0..i-1 are zero
+        let zeros_ok = case i {
+          0 -> True  // No columns to check for row 0
+          _ -> {
+            list.range(0, i - 1)
+            |> list.all(fn(j) {
+              case get_cell(matrix, i, j) {
+                Ok(val) -> val == 0.0
+                Error(_) -> False
+              }
+            })
+          }
+        }
+        
+        // Check that diagonal element is non-zero
+        let diagonal_ok = case get_cell(matrix, i, i) {
+          Ok(val) -> val != 0.0
+          Error(_) -> False
+        }
+        
+        zeros_ok && diagonal_ok
+      })
+    }
+  }
+}
+
+// Solve an upper triangular augmented matrix using back substitution
+// Returns the solution vector x where Ax = b
+pub fn solve_upper_triangular(matrix: Matrix) -> Result(List(Float), SolveError) {
+  let row_count = rows(matrix)
+  let col_count = columns(matrix)
+  
+  // Verify dimensions
+  case col_count == row_count + 1 {
+    False -> Error(WrongDimensions)
+    True -> {
+      // Verify it's upper triangular
+      case is_upper_triangular(matrix) {
+        False -> Error(NotUpperTriangular)
+        True -> {
+          // Perform back substitution
+          // Start from the last row and work upward
+          do_back_substitution(matrix, row_count - 1, [])
+        }
+      }
+    }
+  }
+}
+
+// Helper for back substitution - recursive
+fn do_back_substitution(
+  matrix: Matrix,
+  row: Int,
+  acc: List(Float),
+) -> Result(List(Float), SolveError) {
+  case row < 0 {
+    True -> Ok(acc)
+    False -> {
+      // Get the row
+      case get_row(matrix, row) {
+        Error(_) -> Error(WrongDimensions)
+        Ok(row_data) -> {
+          let col_count = columns(matrix)
+          let n = col_count - 1  // Number of variables
+          
+          // Get diagonal element
+          case list.drop(row_data, row) |> list.first {
+            Error(_) -> Error(ZeroDiagonal)
+            Ok(diagonal) -> {
+              case diagonal == 0.0 {
+                True -> Error(ZeroDiagonal)
+                False -> {
+                  // Get b value (last column)
+                  case list.drop(row_data, n) |> list.first {
+                    Error(_) -> Error(WrongDimensions)
+                    Ok(b) -> {
+                      // Calculate: x_i = (b_i - sum(A_ij * x_j)) / A_ii
+                      // We need to subtract the contribution of already-solved variables
+                      let sum = list.index_fold(acc, 0.0, fn(s, x_j, j) {
+                        let col_index = row + 1 + j
+                        case list.drop(row_data, col_index) |> list.first {
+                          Ok(a_ij) -> s +. a_ij *. x_j
+                          Error(_) -> s
+                        }
+                      })
+                      
+                      let x_i = { b -. sum } /. diagonal
+                      do_back_substitution(matrix, row - 1, [x_i, ..acc])
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
