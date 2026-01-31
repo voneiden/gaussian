@@ -14,3 +14,26 @@ export function getPreferredColorScheme() {
   }
   return "light";
 }
+
+export function saveSettings(decimalPrecision) {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('gaussian_settings', JSON.stringify({
+      decimal_precision: decimalPrecision
+    }));
+  }
+}
+
+export function loadSettings() {
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem('gaussian_settings');
+    if (saved) {
+      try {
+        const settings = JSON.parse(saved);
+        return settings.decimal_precision || 3;
+      } catch (e) {
+        return 3;
+      }
+    }
+  }
+  return 3;
+}

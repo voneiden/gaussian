@@ -2,6 +2,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/dynamic
 import lustre
 import lustre/attribute
 import lustre/effect
@@ -19,6 +20,16 @@ fn set_document_class(class_name: String) -> Nil
 @external(javascript, "./gaussian.ffi.mjs", "getPreferredColorScheme")
 @external(erlang, "gaussian_ffi", "get_preferred_color_scheme")
 fn get_preferred_color_scheme() -> String
+
+// FFI function to save settings to local storage
+@external(javascript, "./gaussian.ffi.mjs", "saveSettings")
+@external(erlang, "gaussian_ffi", "save_settings")
+fn save_settings(decimal_precision: Int) -> Nil
+
+// FFI function to load settings from local storage
+@external(javascript, "./gaussian.ffi.mjs", "loadSettings")
+@external(erlang, "gaussian_ffi", "load_settings")
+fn load_settings() -> Int
 
 pub fn main() {
   let app = lustre.application(init, update, view)
@@ -59,7 +70,7 @@ pub type HistoryEntry {
 
 pub type InputMode {
   SettingDimensions
-  EditingMatrix(rows: Int, cols: Int, values: List(String))
+  EditingMatrix(rows: Int, cols: Int, values: List(String), touched: List(Bool))
   Operating
 }
 
@@ -71,6 +82,8 @@ fn init(_flags) -> #(Model, effect.Effect(Msg)) {
   }
   let _ = set_document_class(preferred_scheme)
   
+  let saved_precision = load_settings()
+  
   #(
     Model(
       current_matrix: matrix.new(0, 0),
@@ -78,11 +91,11 @@ fn init(_flags) -> #(Model, effect.Effect(Msg)) {
       history: [],
       input_mode: SettingDimensions,
       dimension_rows: "3",
-      dimension_cols: "4",
+      dimension_cols: "3",
       hovered_cell: None,
       preview_row: None,
       theme: initial_theme,
-      settings: Settings(decimal_precision: 3),
+      settings: Settings(decimal_precision: saved_precision),
       show_settings_modal: False,
     ),
     effect.none(),
@@ -109,6 +122,7 @@ pub type Msg {
   KeyPress(String)
   HoverCell(row: Int, col: Int)
   UnhoverCell
+  CellBlur(index: Int)
   NoOp
 }
 
@@ -127,15 +141,13 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
         Ok(r) if r > 0 && r <= 10 -> r
         _ -> 3
       }
-      let cols = case int.parse(model.dimension_cols) {
-        Ok(c) if c > 0 && c <= 10 -> c
-        _ -> 4
-      }
+      // Automatically add 1 column for augmented matrix (Ax = b becomes [A|b])
+      let cols = rows + 1
       let total = rows * cols
       #(
         Model(
           ..model,
-          input_mode: EditingMatrix(rows, cols, list.repeat("0", total)),
+          input_mode: EditingMatrix(rows, cols, list.repeat("", total), list.repeat(False, total)),
         ),
         effect.none(),
       )
@@ -143,7 +155,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
 
     UpdateCell(index, value) -> {
       case model.input_mode {
-        EditingMatrix(rows, cols, values) -> {
+        EditingMatrix(rows, cols, values, touched) -> {
           let new_values = list.index_map(values, fn(v, i) {
             case i == index {
               True -> value
@@ -151,7 +163,25 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
             }
           })
           #(
-            Model(..model, input_mode: EditingMatrix(rows, cols, new_values)),
+            Model(..model, input_mode: EditingMatrix(rows, cols, new_values, touched)),
+            effect.none(),
+          )
+        }
+        _ -> #(model, effect.none())
+      }
+    }
+    
+    CellBlur(index) -> {
+      case model.input_mode {
+        EditingMatrix(rows, cols, values, touched) -> {
+          let new_touched = list.index_map(touched, fn(t, i) {
+            case i == index {
+              True -> True
+              False -> t
+            }
+          })
+          #(
+            Model(..model, input_mode: EditingMatrix(rows, cols, values, new_touched)),
             effect.none(),
           )
         }
@@ -161,7 +191,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
 
     InitializeMatrix -> {
       case model.input_mode {
-        EditingMatrix(rows, cols, values) -> {
+        EditingMatrix(rows, cols, values, _touched) -> {
           // Parse values to floats - handles both "1" and "1.0"
           let float_values =
             values
@@ -289,7 +319,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
           history: [],
           input_mode: SettingDimensions,
           dimension_rows: "3",
-          dimension_cols: "4",
+          dimension_cols: "3",
           hovered_cell: None,
           preview_row: None,
           theme: model.theme,
@@ -322,6 +352,7 @@ fn update(model: Model, msg: Msg) -> #(Model, effect.Effect(Msg)) {
         Ok(p) if p >= 0 && p <= 10 -> p
         _ -> model.settings.decimal_precision
       }
+      let _ = save_settings(precision)
       #(Model(..model, settings: Settings(decimal_precision: precision)), effect.none())
     }
 
@@ -413,6 +444,24 @@ fn get_guide_text(model: Model) -> String {
   }
 }
 
+// Helper to validate if a string is a valid number (empty is also valid)
+fn is_valid_number(s: String) -> Bool {
+  case s {
+    "" -> True  // Empty is valid
+    _ -> case parse_number(s) {
+      Ok(_) -> True
+      Error(_) -> False
+    }
+  }
+}
+
+// Helper to check if all matrix values are valid
+fn validate_matrix_values(values: List(String)) -> #(Bool, List(Bool)) {
+  let validations = list.map(values, is_valid_number)
+  let all_valid = list.all(validations, fn(v) { v })
+  #(all_valid, validations)
+}
+
 // Helper to parse a string to float, handling both integers and floats
 fn parse_number(s: String) -> Result(Float, Nil) {
   // First try parsing as float
@@ -472,11 +521,9 @@ fn chunk_list(items: List(a), chunk_size: Int) -> List(List(a)) {
 fn view_settings_modal(model: Model) -> Element(Msg) {
   html.div([
     attribute.class("fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"),
-    event.on_click(ToggleSettingsModal),
   ], [
     html.div([
       attribute.class("bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full"),
-      event.on_click(NoOp), // Prevent click from closing modal
     ], [
       html.h2([attribute.class("text-2xl font-bold text-gray-800 dark:text-gray-100 mb-4")], [
         element.text("Settings")
@@ -551,7 +598,7 @@ fn view(model: Model) -> Element(Msg) {
     },
     case model.input_mode {
       SettingDimensions -> view_dimension_input(model)
-      EditingMatrix(rows, cols, values) -> view_matrix_input(rows, cols, values)
+      EditingMatrix(rows, cols, values, touched) -> view_matrix_input(rows, cols, values, touched)
       Operating -> view_operating_mode(model)
     },
   ])
@@ -560,10 +607,13 @@ fn view(model: Model) -> Element(Msg) {
 fn view_dimension_input(model: Model) -> Element(Msg) {
   html.div([attribute.class("bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md")], [
     html.h2([attribute.class("text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4")], [
-      element.text("Enter Matrix Dimensions")
+      element.text("System of Linear Equations")
+    ]),
+    html.p([attribute.class("text-gray-600 dark:text-gray-400 mb-4")], [
+      element.text("Solve Ax = b using Gaussian elimination")
     ]),
     html.div([attribute.class("mb-4")], [
-      html.p([attribute.class("text-gray-600 dark:text-gray-400 mb-2")], [element.text("Rows (1-10):")]),
+      html.p([attribute.class("text-gray-600 dark:text-gray-400 mb-2")], [element.text("Number of equations/unknowns (1-10):")]),
       html.input([
         attribute.class("px-4 py-2 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded focus:border-green-500 focus:outline-none w-32 text-center"),
         attribute.type_("number"),
@@ -571,17 +621,6 @@ fn view_dimension_input(model: Model) -> Element(Msg) {
         attribute.attribute("min", "1"),
         attribute.attribute("max", "10"),
         event.on_input(UpdateDimensionRows),
-      ]),
-    ]),
-    html.div([attribute.class("mb-4")], [
-      html.p([attribute.class("text-gray-600 dark:text-gray-400 mb-2")], [element.text("Columns (1-10):")]),
-      html.input([
-        attribute.class("px-4 py-2 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded focus:border-green-500 focus:outline-none w-32 text-center"),
-        attribute.type_("number"),
-        attribute.value(model.dimension_cols),
-        attribute.attribute("min", "1"),
-        attribute.attribute("max", "10"),
-        event.on_input(UpdateDimensionCols),
       ]),
     ]),
     html.button(
@@ -594,18 +633,44 @@ fn view_dimension_input(model: Model) -> Element(Msg) {
   ])
 }
 
-fn view_matrix_input(rows: Int, cols: Int, values: List(String)) -> Element(Msg) {
+fn view_matrix_input(rows: Int, cols: Int, values: List(String), touched: List(Bool)) -> Element(Msg) {
+  let #(all_valid, validations) = validate_matrix_values(values)
+  
+  // Only count invalid cells that have been touched
+  let touched_invalid_count = 
+    list.zip(validations, touched)
+    |> list.filter(fn(pair) { 
+      let #(is_valid, is_touched) = pair
+      is_touched && !is_valid
+    })
+    |> list.length
+  
   html.div([attribute.class("bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md")], [
     html.h2([attribute.class("text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4")], [
       element.text("Enter Matrix Values")
     ]),
-    html.p([attribute.class("text-sm text-gray-500 dark:text-gray-400 mb-2")], [
-      element.text("Debug: Total values = " <> int.to_string(list.length(values)) <> " | First value: " <> case list.first(values) {
-        Ok(v) -> "\"" <> v <> "\""
-        Error(_) -> "none"
-      })
+    html.p([attribute.class("text-gray-600 dark:text-gray-400 mb-4")], [
+      element.text("Enter the augmented matrix [A|b] for your system of equations")
     ]),
-    html.div([attribute.class("overflow-x-auto mb-4")], [
+    
+    // Validation error message - only show if there are touched invalid cells
+    case touched_invalid_count > 0 {
+      True -> html.div([attribute.class("bg-red-50 dark:bg-red-900 border-l-4 border-red-500 p-4 mb-4 rounded")], [
+        html.p([attribute.class("text-red-900 dark:text-red-100 font-medium")], [
+          element.text("⚠️ Invalid input: " <> int.to_string(touched_invalid_count) <> " cell(s) contain invalid numbers")
+        ])
+      ])
+      False -> element.none()
+    },
+    
+    html.div([attribute.class("overflow-x-auto mb-4 flex items-center justify-center")], [
+      // Left bracket - scales with matrix height
+      html.div([
+        attribute.class("border-l-4 border-t-4 border-b-4 border-gray-400 dark:border-gray-500 rounded-l-lg mr-1 self-stretch"),
+      ], [
+        html.div([attribute.class("w-2 py-1")], [])
+      ]),
+      
       html.table([attribute.class("border-collapse")], [
         html.tbody(
           [],
@@ -618,14 +683,49 @@ fn view_matrix_input(rows: Int, cols: Int, values: List(String)) -> Element(Msg)
                 let index = r * cols + c
                 let value = case list.drop(values, index) |> list.first {
                   Ok(v) -> v
-                  Error(_) -> "?"
+                  Error(_) -> ""
                 }
-                html.td([attribute.class("p-1")], [
+                
+                // Check if this cell is valid
+                let is_valid = case list.drop(validations, index) |> list.first {
+                  Ok(v) -> v
+                  Error(_) -> True
+                }
+                
+                // Check if this cell has been touched (blurred)
+                let is_touched = case list.drop(touched, index) |> list.first {
+                  Ok(t) -> t
+                  Error(_) -> False
+                }
+                
+                // Generate placeholder text with subscript notation
+                let placeholder = case c == cols - 1 {
+                  // Last column is the b vector
+                  True -> "b" <> get_subscript(r + 1)
+                  // Other columns are A matrix
+                  False -> "A" <> get_subscript(r + 1) <> get_subscript(c + 1)
+                }
+                
+                // Add special styling for the augmented column (last column)
+                let cell_class = case c == cols - 1 {
+                  True -> "p-1 border-l-4 border-l-gray-400 dark:border-l-gray-500"
+                  False -> "p-1"
+                }
+                
+                // Input border color based on validation (only show red if touched and invalid)
+                let input_border_class = case is_touched, is_valid {
+                  True, False -> "border-red-500 dark:border-red-400"
+                  _, _ -> "border-gray-300 dark:border-gray-600"
+                }
+                
+                html.td([attribute.class(cell_class)], [
                   html.input([
-                    attribute.class("w-20 px-2 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded text-center focus:border-green-500 focus:outline-none"),
+                    attribute.class("w-20 px-2 py-2 border-2 dark:bg-gray-700 dark:text-gray-100 rounded text-center focus:border-green-500 focus:outline-none " <> input_border_class),
                     attribute.type_("text"),
                     attribute.value(value),
+                    attribute.placeholder(placeholder),
                     event.on_input(fn(v) { UpdateCell(index, v) }),
+                    event.on_blur(CellBlur(index)),
                   ]),
                 ])
               }),
@@ -633,15 +733,46 @@ fn view_matrix_input(rows: Int, cols: Int, values: List(String)) -> Element(Msg)
           }),
         ),
       ]),
+      
+      // Right bracket - scales with matrix height
+      html.div([
+        attribute.class("border-r-4 border-t-4 border-b-4 border-gray-400 dark:border-gray-500 rounded-r-lg ml-1 self-stretch"),
+      ], [
+        html.div([attribute.class("w-2 py-1")], [])
+      ]),
     ]),
     html.button(
       [
-        attribute.class("bg-green-500 text-white px-6 py-3 rounded hover:bg-green-600 transition-colors font-medium"),
+        attribute.class(
+          "px-6 py-3 rounded font-medium transition-colors " <>
+          case all_valid {
+            True -> "bg-green-500 text-white hover:bg-green-600 cursor-pointer"
+            False -> "bg-gray-400 text-gray-700 cursor-not-allowed"
+          }
+        ),
+        attribute.disabled(!all_valid),
         event.on_click(InitializeMatrix)
       ],
       [element.text("Start Operating")],
     ),
   ])
+}
+
+// Helper function to convert numbers to Unicode subscripts
+fn get_subscript(n: Int) -> String {
+  case n {
+    0 -> "₀"
+    1 -> "₁"
+    2 -> "₂"
+    3 -> "₃"
+    4 -> "₄"
+    5 -> "₅"
+    6 -> "₆"
+    7 -> "₇"
+    8 -> "₈"
+    9 -> "₉"
+    _ -> int.to_string(n)
+  }
 }
 
 fn view_operating_mode(model: Model) -> Element(Msg) {
