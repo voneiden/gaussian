@@ -1,11 +1,8 @@
 # gaussian
 
-[![Package Version](https://img.shields.io/hexpm/v/gaussian)](https://hex.pm/packages/gaussian)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/gaussian/)
-
 A visual Gaussian elimination tool for the browser, built with Gleam and Lustre.
 
-🌐 **Live Demo**: [https://voneiden.github.io/gaussian](https://voneiden.github.io/gaussian) (once deployed)
+🌐 **Live Demo**: [https://voneiden.github.io/gaussian](https://voneiden.github.io/gaussian)
 
 > **Note**: This project is 100% vibe coded using GitHub Copilot CLI. It was created as a demonstration of AI-assisted software development, from initial planning through implementation, testing, and deployment setup.
 
@@ -172,7 +169,3 @@ This generates optimized files in the `dist` directory:
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Feel free to open issues or submit pull requests.
